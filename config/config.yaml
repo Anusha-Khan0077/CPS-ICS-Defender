@@ -1,0 +1,93 @@
+
+# CPS/ICS Defender Configuration
+# Override any value with environment variables: CPS_SECTION__KEY=value
+
+ids:
+  # Ensemble weights (must sum to 1.0)
+  rule_weight: 0.40
+  statistical_weight: 0.30
+  ml_weight: 0.30
+
+  # Alert threshold: combined score must exceed this to fire
+  alert_threshold: 0.45
+
+  # Statistical detector
+  statistical:
+    z_score_threshold: 3.5        # Welford z-score alarm level
+    isolation_contamination: 0.05 # Expected fraction of anomalies
+    min_samples_for_ml: 100       # Samples before IsolationForest trains
+
+  # ML detector
+  ml:
+    n_estimators: 200
+    max_depth: 12
+    min_samples_leaf: 2
+    model_path: data/models/ml_detector.joblib
+
+sdn:
+  # "mock" (in-memory) or "ryu" (real Ryu controller REST API)
+  controller_type: mock
+
+  ryu:
+    host: "127.0.0.1"
+    port: 8080
+    timeout: 5.0
+
+  mitigation:
+    rate_limit_bps: 1000000        # 1 Mbps cap during rate-limiting
+    isolation_duration: 300        # Seconds before auto-expiry
+    cooldown_period: 60            # Minimum seconds between actions on same host
+    critical_hosts:                # These hosts can never be fully blocked
+      - "10.0.0.1"                 # DNP3 master
+      - "10.0.0.10"                # HMI
+    max_isolated_hosts: 5          # Safety: prevent mass-isolation
+
+rl:
+  agent:
+    learning_rate: 0.001
+    gamma: 0.95                    # Discount factor
+    epsilon_start: 1.0
+    epsilon_end: 0.05
+    epsilon_decay: 0.995
+    batch_size: 64
+    memory_size: 10000
+    target_update_freq: 100        # Steps between target network syncs
+    hidden_sizes: [128, 64]
+    model_path: data/models/dqn_agent.npz
+
+  training:
+    episodes: 500
+    max_steps_per_episode: 200
+    eval_interval: 50              # Evaluate every N episodes
+
+  rewards:
+    true_positive: 2.0
+    false_negative: -2.0
+    false_positive: -1.0
+    true_negative: 1.0
+    qos_penalty_weight: 0.5
+
+genai:
+  augmentation:
+    gaussian_noise_scale: 0.05
+    mixup_alpha: 0.2
+    vae_latent_dim: 8
+    vae_epochs: 50
+    boundary_steps: 10
+    target_samples_per_class: 500
+
+logging:
+  level: INFO
+  file: logs/cps_defender.log
+  max_bytes: 10485760              # 10 MB
+  backup_count: 5
+
+testbed:
+  topology:
+    master_ip: "10.0.0.1"
+    hmi_ip: "10.0.0.10"
+    outstation_prefix: "10.0.1."
+    n_outstations: 4
+  simulation:
+    seed: 42
+    normal_ratio: 0.70             # 70% normal traffic in synthetic data

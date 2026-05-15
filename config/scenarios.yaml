@@ -1,0 +1,134 @@
+
+# Threat Scenario Definitions
+# Used by traffic simulator and RL training curriculum
+
+scenarios:
+  - id: baseline_normal
+    name: "Baseline Normal Operations"
+    description: >
+      Standard DNP3 poll-response cycles between master and outstations.
+      Includes periodic integrity polls, time sync, and HMI reads.
+    attack_types: []
+    duration_steps: 200
+    attack_ratio: 0.0
+    difficulty: easy
+
+  - id: host_scan
+    name: "Network Reconnaissance / Host Scan"
+    description: >
+      Attacker enumerates reachable ICS devices by probing multiple
+      outstation addresses. Characterized by high unique-destination count,
+      short flows, many SYN with no response.
+    attack_types: [scan]
+    duration_steps: 200
+    attack_ratio: 0.30
+    difficulty: easy
+    indicators:
+      - high_rate_scan
+      - unusual_port
+
+  - id: replay_attack
+    name: "Command Replay Attack"
+    description: >
+      Captured legitimate DNP3 commands are replayed to cause unintended
+      actuator state changes. Detectable via timing anomalies and
+      duplicate request/response pairs.
+    attack_types: [replay]
+    duration_steps: 200
+    attack_ratio: 0.20
+    difficulty: medium
+    indicators:
+      - duplicate_unsolicited
+      - timing_attack
+
+  - id: command_injection
+    name: "Malicious Command Injection"
+    description: >
+      Attacker injects unauthorized DNP3 WRITE or SELECT/OPERATE commands
+      targeting output points (relays, actuators). High-severity; direct
+      physical impact potential.
+    attack_types: [command_injection]
+    duration_steps: 200
+    attack_ratio: 0.15
+    difficulty: hard
+    indicators:
+      - broadcast_write
+      - config_change_fc
+      - unknown_function_code
+
+  - id: flooding_dos
+    name: "Protocol Flooding / DoS"
+    description: >
+      High-rate packet flood targeting master or specific outstations,
+      degrading availability of control communications.
+    attack_types: [flooding]
+    duration_steps: 200
+    attack_ratio: 0.40
+    difficulty: medium
+    indicators:
+      - flooding
+      - error_storm
+
+  - id: mitm_manipulation
+    name: "Man-in-the-Middle Traffic Manipulation"
+    description: >
+      Attacker intercepts and modifies DNP3 data objects in transit.
+      Alters measurement values to deceive operators or mask physical events.
+    attack_types: [mitm]
+    duration_steps: 200
+    attack_ratio: 0.10
+    difficulty: hard
+    indicators:
+      - error_storm
+
+  - id: multi_stage_campaign
+    name: "Multi-Stage Attack Campaign"
+    description: >
+      Full attack kill-chain: reconnaissance → replay to establish baseline
+      → command injection to cause disruption → flooding to mask forensics.
+    attack_types: [scan, replay, command_injection, flooding]
+    duration_steps: 400
+    attack_ratio: 0.35
+    difficulty: expert
+    stages:
+      - steps: [0, 100]
+        active_types: [scan]
+      - steps: [80, 200]
+        active_types: [replay]
+      - steps: [180, 300]
+        active_types: [command_injection]
+      - steps: [280, 400]
+        active_types: [flooding]
+
+  - id: evasion_low_and_slow
+    name: "Low-and-Slow Evasion"
+    description: >
+      Attacker throttles malicious activity below threshold detection levels,
+      distributing commands over many sessions and mimicking normal behavior.
+    attack_types: [command_injection, replay]
+    duration_steps: 400
+    attack_ratio: 0.08
+    difficulty: expert
+    evasion_modifiers:
+      rate_reduction: 0.15
+      timing_jitter: 0.3
+      session_fragmentation: true
+
+curriculum:
+  # RL training progression: start easy, increase difficulty
+  stages:
+    - name: "phase_1_detection"
+      scenarios: [baseline_normal, host_scan, flooding_dos]
+      episodes: 100
+
+    - name: "phase_2_response"
+      scenarios: [baseline_normal, host_scan, replay_attack, flooding_dos]
+      episodes: 150
+
+    - name: "phase_3_advanced"
+      scenarios: [replay_attack, command_injection, mitm_manipulation]
+      episodes: 150
+
+    - name: "phase_4_adversarial"
+      scenarios: [multi_stage_campaign, evasion_low_and_slow]
+      episodes: 100

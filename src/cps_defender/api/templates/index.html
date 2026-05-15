@@ -1,0 +1,809 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>CPS/ICS Defender — Live Dashboard</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<style>
+  /* ── Design tokens ────────────────────────────────────────────── */
+  :root {
+    --bg:        #0d1117;
+    --surface:   #161b22;
+    --border:    #30363d;
+    --text:      #e6edf3;
+    --muted:     #8b949e;
+    --accent:    #58a6ff;
+    --green:     #3fb950;
+    --yellow:    #d29922;
+    --red:       #f85149;
+    --orange:    #db6d28;
+    --purple:    #bc8cff;
+    --radius:    8px;
+    --font-mono: "SF Mono", "Fira Code", "Consolas", monospace;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    font-size: 14px;
+    min-height: 100vh;
+  }
+
+  /* ── Top bar ──────────────────────────────────────────────────── */
+  header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 12px 24px;
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+    position: sticky; top: 0; z-index: 100;
+  }
+
+  .brand {
+    display: flex; align-items: center; gap: 10px;
+    font-size: 16px; font-weight: 700; letter-spacing: .5px;
+  }
+  .brand svg { color: var(--accent); }
+
+  .controls { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+
+  button {
+    padding: 6px 14px; border-radius: var(--radius);
+    border: 1px solid var(--border); cursor: pointer;
+    font-size: 13px; font-weight: 600; transition: all .15s;
+  }
+  .btn-start  { background: var(--green);  color: #0d1117; border-color: var(--green); }
+  .btn-stop   { background: var(--red);    color: #fff;    border-color: var(--red);   }
+  .btn-reset  { background: transparent;   color: var(--muted); }
+  .btn-start:hover { filter: brightness(1.15); }
+  .btn-stop:hover  { filter: brightness(1.15); }
+  .btn-reset:hover { color: var(--text); border-color: var(--accent); }
+
+  #status-pill {
+    padding: 4px 10px; border-radius: 20px; font-size: 12px;
+    font-weight: 600; text-transform: uppercase; letter-spacing: .5px;
+    background: var(--surface); border: 1px solid var(--border);
+  }
+  .pill-idle     { color: var(--muted); }
+  .pill-training { color: var(--yellow); border-color: var(--yellow); }
+  .pill-running  { color: var(--green);  border-color: var(--green);
+                   box-shadow: 0 0 8px color-mix(in srgb,var(--green) 30%,transparent); }
+  .pill-stopping { color: var(--orange); border-color: var(--orange); }
+
+  /* ── Layout ───────────────────────────────────────────────────── */
+  main { padding: 20px 24px; max-width: 1600px; margin: 0 auto; }
+
+  .grid-kpi {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+    gap: 12px; margin-bottom: 20px;
+  }
+
+  .grid-charts {
+    display: grid;
+    grid-template-columns: 2fr 1fr 1fr;
+    gap: 16px; margin-bottom: 20px;
+  }
+  @media (max-width: 1100px) {
+    .grid-charts { grid-template-columns: 1fr 1fr; }
+  }
+  @media (max-width: 700px)  {
+    .grid-charts { grid-template-columns: 1fr; }
+  }
+
+  .grid-bottom {
+    display: grid;
+    grid-template-columns: 3fr 1fr;
+    gap: 16px;
+  }
+  @media (max-width: 900px) { .grid-bottom { grid-template-columns: 1fr; } }
+
+  /* ── Cards ────────────────────────────────────────────────────── */
+  .card {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: var(--radius); padding: 16px;
+  }
+  .card-title {
+    font-size: 11px; font-weight: 600; text-transform: uppercase;
+    letter-spacing: .8px; color: var(--muted); margin-bottom: 12px;
+  }
+
+  /* ── KPI tiles ────────────────────────────────────────────────── */
+  .kpi { text-align: center; }
+  .kpi-value {
+    font-size: 28px; font-weight: 700;
+    line-height: 1.1; margin-bottom: 4px;
+    font-variant-numeric: tabular-nums;
+  }
+  .kpi-label { font-size: 11px; color: var(--muted); text-transform: uppercase; }
+  .kpi-sub   { font-size: 11px; color: var(--muted); margin-top: 2px; }
+
+  .green  { color: var(--green);  }
+  .red    { color: var(--red);    }
+  .yellow { color: var(--yellow); }
+  .blue   { color: var(--accent); }
+  .purple { color: var(--purple); }
+  .orange { color: var(--orange); }
+
+  /* ── Charts ───────────────────────────────────────────────────── */
+  .chart-wrap { position: relative; }
+  canvas { width: 100% !important; }
+
+  /* ── Config panel ─────────────────────────────────────────────── */
+  .config-row {
+    display: flex; align-items: center; justify-content: space-between;
+    margin-bottom: 10px; gap: 8px;
+  }
+  .config-label { font-size: 12px; color: var(--muted); white-space: nowrap; }
+  .config-val   { font-size: 12px; color: var(--accent); min-width: 36px; text-align: right; }
+
+  input[type="range"] {
+    flex: 1; accent-color: var(--accent); height: 4px;
+    background: var(--border); border-radius: 4px; cursor: pointer;
+  }
+  input[type="range"]::-webkit-slider-thumb {
+    width: 14px; height: 14px; border-radius: 50%;
+    background: var(--accent); cursor: pointer;
+  }
+
+  .toggle-wrap {
+    display: flex; align-items: center; justify-content: space-between;
+    margin-bottom: 10px;
+  }
+  .toggle {
+    position: relative; width: 36px; height: 20px;
+    display: inline-block;
+  }
+  .toggle input { opacity: 0; width: 0; height: 0; }
+  .slider-t {
+    position: absolute; cursor: pointer; inset: 0;
+    background: var(--border); border-radius: 20px; transition: .2s;
+  }
+  .slider-t:before {
+    content: ""; position: absolute;
+    height: 14px; width: 14px; left: 3px; bottom: 3px;
+    background: white; border-radius: 50%; transition: .2s;
+  }
+  input:checked + .slider-t { background: var(--accent); }
+  input:checked + .slider-t:before { transform: translateX(16px); }
+
+  /* ── Alert feed ───────────────────────────────────────────────── */
+  .feed-wrap { max-height: 420px; overflow-y: auto; }
+  .feed-wrap::-webkit-scrollbar { width: 4px; }
+  .feed-wrap::-webkit-scrollbar-track { background: transparent; }
+  .feed-wrap::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
+
+  table { width: 100%; border-collapse: collapse; font-size: 12px; }
+  th {
+    text-align: left; padding: 6px 8px;
+    border-bottom: 1px solid var(--border);
+    color: var(--muted); font-weight: 600;
+    font-size: 11px; text-transform: uppercase; letter-spacing: .5px;
+    position: sticky; top: 0; background: var(--surface); z-index: 1;
+  }
+  td { padding: 5px 8px; border-bottom: 1px solid #1d2228; }
+  tr:hover td { background: #1c2128; }
+  tr.new-row { animation: flash .6s ease; }
+
+  @keyframes flash {
+    0%  { background: color-mix(in srgb, var(--accent) 15%, transparent); }
+    100%{ background: transparent; }
+  }
+
+  .badge {
+    display: inline-block; padding: 2px 8px; border-radius: 12px;
+    font-size: 11px; font-weight: 600; text-transform: uppercase;
+  }
+  .sev-critical { background: #3d1a1a; color: var(--red); }
+  .sev-high     { background: #2d1f0f; color: var(--orange); }
+  .sev-medium   { background: #2d2207; color: var(--yellow); }
+  .sev-low      { background: #0e2a1d; color: var(--green); }
+  .sev-info     { background: #131d2e; color: var(--accent); }
+
+  .act-BLOCK     { color: var(--red); font-weight: 700; }
+  .act-ISOLATE   { color: var(--orange); font-weight: 600; }
+  .act-SEGMENT   { color: var(--yellow); }
+  .act-RATE_LIMIT{ color: var(--accent); }
+  .act-MONITOR   { color: var(--green); }
+
+  .tp-badge { color: var(--green); font-weight: 600; }
+  .fp-badge { color: var(--red); }
+
+  .mono { font-family: var(--font-mono); }
+
+  /* ── Status log ───────────────────────────────────────────────── */
+  #status-log {
+    font-family: var(--font-mono); font-size: 11px;
+    color: var(--muted); max-height: 100px;
+    overflow-y: auto; padding-top: 4px;
+  }
+  #status-log div { padding: 2px 0; }
+  #status-log div:last-child { color: var(--accent); }
+
+  /* ── Empty states ─────────────────────────────────────────────── */
+  .empty {
+    text-align: center; padding: 40px;
+    color: var(--muted); font-size: 13px;
+  }
+</style>
+</head>
+<body>
+
+<!-- ── Header ──────────────────────────────────────────────────────────── -->
+<header>
+  <div class="brand">
+    <svg width="22" height="22" viewBox="0 0 24 24" fill="none"
+         stroke="currentColor" stroke-width="2">
+      <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+      <polyline points="9 12 11 14 15 10"/>
+    </svg>
+    CPS/ICS Defender
+  </div>
+
+  <div class="controls">
+    <span id="status-pill" class="pill-idle">Idle</span>
+    <button class="btn-start" id="btn-start" onclick="startEngine()">▶ Start</button>
+    <button class="btn-stop"  id="btn-stop"  onclick="stopEngine()" disabled>■ Stop</button>
+    <button class="btn-reset"               onclick="resetEngine()">↺ Reset</button>
+  </div>
+</header>
+
+<!-- ── Main ────────────────────────────────────────────────────────────── -->
+<main>
+
+  <!-- KPI row -->
+  <div class="grid-kpi">
+    <div class="card kpi">
+      <div class="kpi-value blue" id="kpi-total">0</div>
+      <div class="kpi-label">Flows</div>
+      <div class="kpi-sub" id="kpi-fps">— flows/s</div>
+    </div>
+    <div class="card kpi">
+      <div class="kpi-value orange" id="kpi-alerts">0</div>
+      <div class="kpi-label">Alerts</div>
+    </div>
+    <div class="card kpi">
+      <div class="kpi-value green" id="kpi-tpr">—</div>
+      <div class="kpi-label">TPR / Recall</div>
+    </div>
+    <div class="card kpi">
+      <div class="kpi-value green" id="kpi-prec">—</div>
+      <div class="kpi-label">Precision</div>
+    </div>
+    <div class="card kpi">
+      <div class="kpi-value red" id="kpi-fpr">—</div>
+      <div class="kpi-label">FPR</div>
+    </div>
+    <div class="card kpi">
+      <div class="kpi-value purple" id="kpi-f1">—</div>
+      <div class="kpi-label">F1 Score</div>
+    </div>
+    <div class="card kpi">
+      <div class="kpi-value green" id="kpi-tp">0</div>
+      <div class="kpi-label">True Pos</div>
+    </div>
+    <div class="card kpi">
+      <div class="kpi-value red" id="kpi-fp">0</div>
+      <div class="kpi-label">False Pos</div>
+    </div>
+    <div class="card kpi">
+      <div class="kpi-value yellow" id="kpi-fn">0</div>
+      <div class="kpi-label">False Neg</div>
+    </div>
+    <div class="card kpi">
+      <div class="kpi-value blue" id="kpi-tn">0</div>
+      <div class="kpi-label">True Neg</div>
+    </div>
+  </div>
+
+  <!-- Charts row -->
+  <div class="grid-charts">
+
+    <!-- Timeline -->
+    <div class="card">
+      <div class="card-title">Alert Rate Timeline</div>
+      <div class="chart-wrap" style="height:200px">
+        <canvas id="chart-timeline"></canvas>
+      </div>
+    </div>
+
+    <!-- Attack types -->
+    <div class="card">
+      <div class="card-title">Attack Type Distribution</div>
+      <div class="chart-wrap" style="height:200px">
+        <canvas id="chart-attacks"></canvas>
+      </div>
+    </div>
+
+    <!-- Actions taken -->
+    <div class="card">
+      <div class="card-title">Mitigation Actions</div>
+      <div class="chart-wrap" style="height:200px">
+        <canvas id="chart-actions"></canvas>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- Confusion matrix + severity row -->
+  <div class="grid-charts" style="margin-bottom:20px; grid-template-columns:1fr 1fr 1fr;">
+
+    <!-- Severity breakdown -->
+    <div class="card">
+      <div class="card-title">Alerts by Severity</div>
+      <div class="chart-wrap" style="height:170px">
+        <canvas id="chart-severity"></canvas>
+      </div>
+    </div>
+
+    <!-- Confusion matrix visual -->
+    <div class="card">
+      <div class="card-title">Confusion Matrix</div>
+      <div id="conf-matrix" style="display:grid;grid-template-columns:1fr 1fr;gap:8px;height:170px;align-items:center;">
+        <div class="card" style="text-align:center;background:#0e2a1d;border-color:#196830">
+          <div style="font-size:11px;color:var(--muted);margin-bottom:4px">True Positive</div>
+          <div style="font-size:32px;font-weight:700;color:var(--green)" id="cm-tp">0</div>
+        </div>
+        <div class="card" style="text-align:center;background:#3d1a1a;border-color:#6e2020">
+          <div style="font-size:11px;color:var(--muted);margin-bottom:4px">False Positive</div>
+          <div style="font-size:32px;font-weight:700;color:var(--red)" id="cm-fp">0</div>
+        </div>
+        <div class="card" style="text-align:center;background:#2d2207;border-color:#5a4010">
+          <div style="font-size:11px;color:var(--muted);margin-bottom:4px">False Negative</div>
+          <div style="font-size:32px;font-weight:700;color:var(--yellow)" id="cm-fn">0</div>
+        </div>
+        <div class="card" style="text-align:center;background:#131d2e;border-color:#1f3a6e">
+          <div style="font-size:11px;color:var(--muted);margin-bottom:4px">True Negative</div>
+          <div style="font-size:32px;font-weight:700;color:var(--accent)" id="cm-tn">0</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Config -->
+    <div class="card">
+      <div class="card-title">Simulation Config</div>
+      <div class="config-row">
+        <span class="config-label">Attack prob</span>
+        <input type="range" id="cfg-attack" min="0" max="1" step="0.05" value="0.30"
+               oninput="this.nextElementSibling.textContent=parseFloat(this.value).toFixed(2)">
+        <span class="config-val">0.30</span>
+      </div>
+      <div class="config-row">
+        <span class="config-label">Flow delay (s)</span>
+        <input type="range" id="cfg-delay" min="0" max="0.5" step="0.01" value="0.15"
+               oninput="this.nextElementSibling.textContent=parseFloat(this.value).toFixed(2)">
+        <span class="config-val">0.15</span>
+      </div>
+      <div class="config-row">
+        <span class="config-label">Warm-up flows</span>
+        <input type="range" id="cfg-warmup" min="50" max="500" step="50" value="200"
+               oninput="this.nextElementSibling.textContent=this.value">
+        <span class="config-val">200</span>
+      </div>
+      <div class="config-row">
+        <span class="config-label">Random seed</span>
+        <input type="range" id="cfg-seed" min="0" max="100" step="1" value="42"
+               oninput="this.nextElementSibling.textContent=this.value">
+        <span class="config-val">42</span>
+      </div>
+      <div class="toggle-wrap">
+        <span class="config-label">Use RL Agent</span>
+        <label class="toggle">
+          <input type="checkbox" id="cfg-rl" onchange="sendConfig()">
+          <span class="slider-t"></span>
+        </label>
+      </div>
+      <button style="width:100%;margin-top:4px" onclick="sendConfig()">Apply Config</button>
+    </div>
+
+  </div>
+
+  <!-- Alert feed + status log -->
+  <div class="grid-bottom">
+
+    <!-- Live alert feed -->
+    <div class="card">
+      <div class="card-title" style="display:flex;justify-content:space-between">
+        <span>Live Alert Feed</span>
+        <span id="feed-count" style="color:var(--muted);font-size:11px"></span>
+      </div>
+      <div class="feed-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Time</th>
+              <th>Src IP</th>
+              <th>Attack Type</th>
+              <th>Severity</th>
+              <th>Conf</th>
+              <th>Action</th>
+              <th>Result</th>
+            </tr>
+          </thead>
+          <tbody id="feed-body">
+            <tr><td colspan="7" class="empty">Waiting for alerts…</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Status + quick stats -->
+    <div style="display:flex;flex-direction:column;gap:12px">
+      <div class="card" style="flex:1">
+        <div class="card-title">System Log</div>
+        <div id="status-log"><div>Ready. Click ▶ Start to begin.</div></div>
+      </div>
+      <div class="card" style="flex:1">
+        <div class="card-title">Throughput</div>
+        <div class="chart-wrap" style="height:120px">
+          <canvas id="chart-fps"></canvas>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+</main>
+
+<script>
+// ── State ──────────────────────────────────────────────────────────────────
+let evtSource = null;
+let alertCount = 0;
+const MAX_FEED_ROWS = 200;
+const MAX_TIMELINE  = 60;
+
+// ── Chart setup ────────────────────────────────────────────────────────────
+const COLORS = {
+  critical: '#f85149', high: '#db6d28', medium: '#d29922',
+  low: '#3fb950', info: '#58a6ff',
+  MONITOR: '#3fb950', RATE_LIMIT: '#58a6ff', SEGMENT: '#d29922',
+  ISOLATE: '#db6d28', BLOCK: '#f85149', '—': '#8b949e',
+  scan: '#58a6ff', replay: '#bc8cff', command_injection: '#f85149',
+  flooding: '#db6d28', mitm: '#d29922', normal: '#3fb950',
+};
+const GRAY = '#30363d';
+
+const chartDefaults = {
+  animation: { duration: 300 },
+  plugins: { legend: { labels: { color: '#8b949e', boxWidth: 12, font: { size: 11 } } } },
+  scales: {
+    x: { ticks: { color: '#8b949e', font: { size: 10 } }, grid: { color: '#1d2228' } },
+    y: { ticks: { color: '#8b949e', font: { size: 10 } }, grid: { color: '#1d2228' } },
+  },
+};
+
+// Timeline chart
+const ctxTimeline = document.getElementById('chart-timeline').getContext('2d');
+const chartTimeline = new Chart(ctxTimeline, {
+  type: 'line',
+  data: {
+    labels: [],
+    datasets: [
+      {
+        label: 'Alerts/tick',
+        data: [], borderColor: '#f85149', backgroundColor: 'rgba(248,81,73,.12)',
+        borderWidth: 2, fill: true, tension: 0.4, pointRadius: 2,
+      },
+      {
+        label: 'TPR',
+        data: [], borderColor: '#3fb950', backgroundColor: 'transparent',
+        borderWidth: 1.5, tension: 0.4, pointRadius: 0, borderDash: [4,3],
+      },
+    ],
+  },
+  options: {
+    ...chartDefaults,
+    responsive: true, maintainAspectRatio: false,
+    plugins: { ...chartDefaults.plugins },
+    scales: { ...chartDefaults.scales,
+      y: { ...chartDefaults.scales.y, min: 0, max: 1 }
+    },
+  },
+});
+
+// Attack type bar
+const ctxAttacks = document.getElementById('chart-attacks').getContext('2d');
+const chartAttacks = new Chart(ctxAttacks, {
+  type: 'bar',
+  data: { labels: [], datasets: [{ label: 'Count', data: [], backgroundColor: [] }] },
+  options: {
+    ...chartDefaults, responsive: true, maintainAspectRatio: false,
+    plugins: { legend: { display: false } },
+    scales: { ...chartDefaults.scales },
+  },
+});
+
+// Mitigation actions bar
+const ctxActions = document.getElementById('chart-actions').getContext('2d');
+const chartActions = new Chart(ctxActions, {
+  type: 'bar',
+  data: { labels: [], datasets: [{ label: 'Count', data: [], backgroundColor: [] }] },
+  options: {
+    ...chartDefaults, responsive: true, maintainAspectRatio: false,
+    plugins: { legend: { display: false } },
+    indexAxis: 'y',
+    scales: {
+      x: chartDefaults.scales.x,
+      y: { ticks: { color: '#8b949e', font: { size: 11 } }, grid: { color: '#1d2228' } },
+    },
+  },
+});
+
+// Severity doughnut
+const ctxSev = document.getElementById('chart-severity').getContext('2d');
+const chartSeverity = new Chart(ctxSev, {
+  type: 'doughnut',
+  data: { labels: [], datasets: [{ data: [], backgroundColor: [] }] },
+  options: {
+    responsive: true, maintainAspectRatio: false,
+    animation: { duration: 300 },
+    cutout: '60%',
+    plugins: { legend: { position: 'right', labels: { color: '#8b949e', boxWidth: 12, font: { size: 11 } } } },
+  },
+});
+
+// FPS line
+const ctxFps = document.getElementById('chart-fps').getContext('2d');
+const chartFps = new Chart(ctxFps, {
+  type: 'line',
+  data: {
+    labels: [],
+    datasets: [{
+      label: 'flows/s', data: [], borderColor: '#58a6ff',
+      backgroundColor: 'rgba(88,166,255,.1)', borderWidth: 2,
+      fill: true, tension: 0.4, pointRadius: 0,
+    }],
+  },
+  options: {
+    ...chartDefaults, responsive: true, maintainAspectRatio: false,
+    plugins: { legend: { display: false } },
+    scales: { ...chartDefaults.scales, y: { ...chartDefaults.scales.y, min: 0 } },
+  },
+});
+
+// ── Chart updaters ─────────────────────────────────────────────────────────
+let prevAlerts = 0;
+
+function updateCharts(d) {
+  // Timeline
+  if (d.timeline && d.timeline.length > 0) {
+    const t = d.timeline;
+    chartTimeline.data.labels = t.map(p => p.t);
+    // Compute delta alerts per tick
+    const deltas = t.map((p, i) => i === 0 ? 0 :
+      Math.max(0, (p.alerts - t[i-1].alerts) / Math.max(1, p.total - t[i-1].total)));
+    chartTimeline.data.datasets[0].data = deltas;
+    chartTimeline.data.datasets[1].data = t.map(p => p.tpr);
+    chartTimeline.update('none');
+  }
+
+  // FPS
+  if (d.flows_per_sec !== undefined) {
+    const lab = chartFps.data.labels;
+    const dat = chartFps.data.datasets[0].data;
+    if (lab.length > MAX_TIMELINE) { lab.shift(); dat.shift(); }
+    lab.push(new Date().toLocaleTimeString('en-US', {hour12:false,hour:'2-digit',minute:'2-digit',second:'2-digit'}));
+    dat.push(d.flows_per_sec);
+    chartFps.update('none');
+  }
+
+  // Attack types
+  if (d.by_attack) {
+    const keys = Object.keys(d.by_attack);
+    chartAttacks.data.labels = keys;
+    chartAttacks.data.datasets[0].data = keys.map(k => d.by_attack[k]);
+    chartAttacks.data.datasets[0].backgroundColor = keys.map(k => COLORS[k] || '#58a6ff');
+    chartAttacks.update('none');
+  }
+
+  // Actions
+  if (d.by_action) {
+    const keys = Object.keys(d.by_action);
+    chartActions.data.labels = keys;
+    chartActions.data.datasets[0].data = keys.map(k => d.by_action[k]);
+    chartActions.data.datasets[0].backgroundColor = keys.map(k => COLORS[k] || GRAY);
+    chartActions.update('none');
+  }
+
+  // Severity
+  if (d.by_severity) {
+    const keys = Object.keys(d.by_severity);
+    chartSeverity.data.labels = keys;
+    chartSeverity.data.datasets[0].data = keys.map(k => d.by_severity[k]);
+    chartSeverity.data.datasets[0].backgroundColor = keys.map(k => COLORS[k] || GRAY);
+    chartSeverity.update('none');
+  }
+}
+
+function updateKPIs(d) {
+  setText('kpi-total', d.total?.toLocaleString() ?? '0');
+  setText('kpi-alerts', d.alerts?.toLocaleString() ?? '0');
+  setText('kpi-fps',   (d.flows_per_sec ?? 0).toFixed(1) + ' flows/s');
+  setText('kpi-tpr',   pct(d.tpr));
+  setText('kpi-fpr',   pct(d.fpr));
+  setText('kpi-prec',  pct(d.precision));
+  setText('kpi-f1',    pct(d.f1));
+  setText('kpi-tp', d.tp ?? 0);
+  setText('kpi-fp', d.fp ?? 0);
+  setText('kpi-fn', d.fn ?? 0);
+  setText('kpi-tn', d.tn ?? 0);
+  // Confusion matrix
+  setText('cm-tp', d.tp ?? 0);
+  setText('cm-fp', d.fp ?? 0);
+  setText('cm-fn', d.fn ?? 0);
+  setText('cm-tn', d.tn ?? 0);
+}
+
+// ── Alert feed ─────────────────────────────────────────────────────────────
+function addAlertRow(ev) {
+  const tbody = document.getElementById('feed-body');
+  // Remove placeholder
+  const placeholder = tbody.querySelector('[colspan]');
+  if (placeholder) placeholder.parentElement.remove();
+
+  alertCount++;
+  document.getElementById('feed-count').textContent = alertCount + ' alerts';
+
+  const isTP = ev.true_label !== 'normal';
+  const sevClass = 'sev-' + (ev.severity || 'info');
+  const actClass = 'act-' + (ev.action || 'MONITOR').replace(/[^A-Z_]/g, '');
+
+  const tr = document.createElement('tr');
+  tr.className = 'new-row';
+  tr.innerHTML = `
+    <td class="mono">${esc(ev.timestamp)}</td>
+    <td class="mono">${esc(ev.src_ip)}</td>
+    <td>${esc(ev.attack_type)}</td>
+    <td><span class="badge ${sevClass}">${esc(ev.severity)}</span></td>
+    <td class="mono">${(ev.confidence * 100).toFixed(0)}%</td>
+    <td class="${actClass}">${esc(ev.action)}</td>
+    <td class="${isTP ? 'tp-badge' : 'fp-badge'}">${isTP ? '✓TP' : '○FP'}</td>
+  `;
+
+  // Prepend (newest on top)
+  tbody.insertBefore(tr, tbody.firstChild);
+
+  // Cap table length
+  while (tbody.rows.length > MAX_FEED_ROWS) {
+    tbody.deleteRow(tbody.rows.length - 1);
+  }
+}
+
+// ── SSE connection ──────────────────────────────────────────────────────────
+function connectSSE() {
+  if (evtSource) { evtSource.close(); }
+  evtSource = new EventSource('/api/stream');
+
+  evtSource.onmessage = function(e) {
+    let d;
+    try { d = JSON.parse(e.data); } catch { return; }
+
+    if (d.type === 'status') {
+      logStatus(d.message);
+    } else if (d.type === 'tick') {
+      updateKPIs(d);
+      updateCharts(d);
+      updateStatusPill(d.engine_status);
+    } else if (d.type === 'alert') {
+      addAlertRow(d);
+    }
+  };
+
+  evtSource.onerror = function() {
+    logStatus('SSE connection lost — reconnecting…');
+    setTimeout(connectSSE, 3000);
+  };
+}
+
+// ── Engine controls ─────────────────────────────────────────────────────────
+async function startEngine() {
+  await sendConfig();
+  const r = await fetch('/api/start', { method: 'POST' });
+  const d = await r.json();
+  logStatus('Engine starting…');
+  updateStatusPill(d.status);
+  document.getElementById('btn-start').disabled = true;
+  document.getElementById('btn-stop').disabled  = false;
+}
+
+async function stopEngine() {
+  await fetch('/api/stop', { method: 'POST' });
+  logStatus('Engine stopping…');
+  document.getElementById('btn-start').disabled = false;
+  document.getElementById('btn-stop').disabled  = true;
+}
+
+async function resetEngine() {
+  const r = await fetch('/api/reset', { method: 'POST' });
+  const d = await r.json();
+  if (d.error) { logStatus('Reset error: ' + d.error); return; }
+  // Clear UI
+  document.getElementById('feed-body').innerHTML =
+    '<tr><td colspan="7" class="empty">Waiting for alerts…</td></tr>';
+  alertCount = 0;
+  document.getElementById('feed-count').textContent = '';
+  // Clear charts
+  [chartTimeline, chartAttacks, chartActions, chartSeverity, chartFps].forEach(c => {
+    c.data.labels = []; c.data.datasets.forEach(ds => ds.data = []); c.update('none');
+  });
+  // Clear KPIs
+  ['tp','fp','fn','tn','tpr','fpr','prec','f1','total','alerts']
+    .forEach(k => setText('kpi-'+k, '—'));
+  ['cm-tp','cm-fp','cm-fn','cm-tn'].forEach(id => setText(id, '0'));
+  logStatus('Dashboard reset.');
+}
+
+async function sendConfig() {
+  const cfg = {
+    attack_prob:  parseFloat(document.getElementById('cfg-attack').value),
+    flow_delay:   parseFloat(document.getElementById('cfg-delay').value),
+    warmup_flows: parseInt(document.getElementById('cfg-warmup').value),
+    seed:         parseInt(document.getElementById('cfg-seed').value),
+    use_rl:       document.getElementById('cfg-rl').checked,
+  };
+  await fetch('/api/config', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(cfg),
+  });
+}
+
+// ── UI helpers ─────────────────────────────────────────────────────────────
+function setText(id, val) {
+  const el = document.getElementById(id);
+  if (el) el.textContent = val;
+}
+
+function pct(v) {
+  if (v === null || v === undefined) return '—';
+  return (v * 100).toFixed(1) + '%';
+}
+
+function esc(s) {
+  return String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+function logStatus(msg) {
+  const log = document.getElementById('status-log');
+  const d = document.createElement('div');
+  const ts = new Date().toLocaleTimeString('en-US', {hour12:false});
+  d.textContent = `[${ts}] ${msg}`;
+  log.appendChild(d);
+  log.scrollTop = log.scrollHeight;
+  // Keep last 30 entries
+  while (log.children.length > 30) log.removeChild(log.firstChild);
+}
+
+function updateStatusPill(status) {
+  const pill = document.getElementById('status-pill');
+  pill.textContent = status || 'idle';
+  pill.className = 'pill-' + (status || 'idle');
+  if (status === 'running') {
+    document.getElementById('btn-start').disabled = true;
+    document.getElementById('btn-stop').disabled  = false;
+  } else if (status === 'idle') {
+    document.getElementById('btn-start').disabled = false;
+    document.getElementById('btn-stop').disabled  = true;
+  }
+}
+
+// ── Init ───────────────────────────────────────────────────────────────────
+document.addEventListener('DOMContentLoaded', () => {
+  connectSSE();
+  // Poll status every 5 s as backup
+  setInterval(async () => {
+    try {
+      const r = await fetch('/api/status');
+      const d = await r.json();
+      updateStatusPill(d.status);
+    } catch {}
+  }, 5000);
+});
+</script>
+</body>
+</html>
