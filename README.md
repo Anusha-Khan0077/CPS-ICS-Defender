@@ -29,6 +29,9 @@
 The dashboard provides a live detection console with real-time charts, a confusion matrix,
 alert feed, and simulation controls — all in a single browser tab.
 
+![Dashboard](https://github.com/Anusha-Khan0077/CPS-ICS-Defender/blob/main/docs/Dashboard.png?raw=true)
+![Dashboard-2](https://github.com/Anusha-Khan0077/CPS-ICS-Defender/blob/main/docs/Dashboard-2.png?raw=true)
+
 ```bash
 # Launch the dashboard (auto-opens your browser)
 python scripts/serve.py
